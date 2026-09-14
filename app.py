@@ -1,3 +1,4 @@
+import os
 import time
 import datetime
 import requests
@@ -22,9 +23,9 @@ def keep_alive():
     t.daemon = True
     t.start()
 
-# --- Telegram Credentials ---
-TELEGRAM_BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN_HERE"
-TELEGRAM_CHAT_ID = "6480329441"
+# --- Secrets Ko Render Environment Variables Se Fetch Karna ---
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 # --- Target Symbols ---
 INDICES = {
@@ -34,8 +35,8 @@ INDICES = {
 }
 
 def send_telegram_alert(message):
-    if TELEGRAM_BOT_TOKEN == "8821669894:AAHfNbzElt_QHgPS3cKZOcKBVle8pi6iOno":
-        print("[ALERT]", message)
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("[ERROR] Telegram Credentials are missing in Environment Variables!")
         return
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
@@ -63,7 +64,6 @@ def calculate_indicators(df):
     df['EMA9'] = df['Close'].ewm(span=9, adjust=False).mean()
     df['EMA21'] = df['Close'].ewm(span=21, adjust=False).mean()
     
-    # RSI Calculation
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
@@ -84,7 +84,6 @@ def scan_market():
         
         current_price = round(latest['Close'], 2)
         
-        # Bullish Crossover Strategy (EMA 9 Cross above EMA 21)
         if previous['EMA9'] <= previous['EMA21'] and latest['EMA9'] > latest['EMA21']:
             sl = round(current_price * 0.997, 2)
             tp = round(current_price * 1.006, 2)
@@ -101,8 +100,20 @@ def scan_market():
 
 def main():
     print("🤖 Index Trading Telegram Bot Started...")
-    send_telegram_alert("🚀 *Index Trading Bot Activated!* Live market scanning running on Render Free Service.")
+    send_telegram_alert("🚀 *Index Trading Bot Activated!* Live market scanning running securely on Render.")
     
+    while True:
+        try:
+            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Scanning Indices...")
+            scan_market()
+            time.sleep(60)
+        except Exception as e:
+            print(f"[ERROR] Loop Exception: {e}")
+            time.sleep(15)
+
+if __name__ == "__main__":
+    keep_alive()
+    main()
     while True:
         try:
             print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Scanning Indices...")
