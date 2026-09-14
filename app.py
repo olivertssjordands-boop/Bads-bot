@@ -4,36 +4,39 @@ import requests
 import pandas as pd
 import numpy as np
 import yfinance as yf
+from flask import Flask
+from threading import Thread
 
-# ==========================================
-# CONFIGURATION & PARAMETERS
-# ==========================================
-# Yahan apna Telegram Bot Token aur Chat ID dalein
+# --- Web Server for Render Free Tier ---
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "🤖 Index Trading Bot is Live and Running 24/7!"
+
+def run_web():
+    app.run(host='0.0.0.0', port=8080)
+
+def keep_alive():
+    t = Thread(target=run_web)
+    t.daemon = True
+    t.start()
+
+# --- Telegram Credentials ---
 TELEGRAM_BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN_HERE"
-TELEGRAM_CHAT_ID = "YOUR_TELEGRAM_CHAT_ID_HERE"
+TELEGRAM_CHAT_ID = "6480329441"
 
-# Index symbols for Yahoo Finance
-SYMBOLS = {
+# --- Target Symbols ---
+INDICES = {
     "NIFTY 50": "^NSEI",
     "BANKNIFTY": "^NSEBANK",
     "SENSEX": "^BSESN"
 }
 
-# Scan timeframes (1m, 5m, 15m, 1h)
-TIMEFRAMES = ["1m", "5m", "15m", "1h"]
-
-# Cooldown record to avoid spamming same signal
-last_signal_time = {}
-
-# ==========================================
-# TELEGRAM ALERT HELPER
-# ==========================================
 def send_telegram_alert(message):
-    if TELEGRAM_BOT_TOKEN == "YOUR_TELEGRAM_BOT_TOKEN_HERE":
-        print("[WARNING] Please set your TELEGRAM_BOT_TOKEN in app.py!")
-        print(message)
+    if TELEGRAM_BOT_TOKEN == "8821669894:AAHfNbzElt_QHgPS3cKZOcKBVle8pi6iOno":
+        print("[ALERT]", message)
         return
-
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
@@ -41,68 +44,77 @@ def send_telegram_alert(message):
         "parse_mode": "Markdown"
     }
     try:
-        response = requests.post(url, json=payload, timeout=10)
-        if response.status_code != 200:
-            print(f"[ERROR] Telegram API Error: {response.text}")
+        requests.post(url, json=payload, timeout=10)
     except Exception as e:
-        print(f"[ERROR] Failed to send Telegram alert: {e}")
+        print(f"[ERROR] Failed to send alert: {e}")
 
-# ==========================================
-# 10 STRATEGIES EVALUATOR ENGINE
-# ==========================================
-class StrategyEvaluator:
-    def __init__(self, df):
-        self.df = df
+def fetch_data(symbol, interval="5m", period="5d"):
+    try:
+        ticker = yf.Ticker(symbol)
+        df = ticker.history(period=period, interval=interval)
+        if df.empty:
+            return None
+        return df
+    except Exception as e:
+        print(f"[ERROR] Data fetch error for {symbol}: {e}")
+        return None
 
-    def s1_ema_crossover(self):
-        """1. EMA 9 / EMA 21 Trend & Cross"""
-        ema9 = self.df['close'].ewm(span=9, adjust=False).mean()
-        ema21 = self.df['close'].ewm(span=21, adjust=False).mean()
-        if ema9.iloc[-1] > ema21.iloc[-1]:
-            return 1
-        elif ema9.iloc[-1] < ema21.iloc[-1]:
-            return -1
-        return 0
+def calculate_indicators(df):
+    df['EMA9'] = df['Close'].ewm(span=9, adjust=False).mean()
+    df['EMA21'] = df['Close'].ewm(span=21, adjust=False).mean()
+    
+    # RSI Calculation
+    delta = df['Close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    df['RSI'] = 100 - (100 / (1 + rs))
+    return df
 
-    def s2_rsi_momentum(self):
-        """2. RSI Multi-zone Strength"""
-        delta = self.df['close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-        rs = gain / (loss + 1e-10)
-        rsi = 100 - (100 / (1 + rs))
-        val = rsi.iloc[-1]
-        if val >= 55:
-            return 1
-        elif val <= 45:
-            return -1
-        return 0
+def scan_market():
+    for name, symbol in INDICES.items():
+        df = fetch_data(symbol, interval="5m", period="5d")
+        if df is None or len(df) < 25:
+            continue
+            
+        df = calculate_indicators(df)
+        
+        latest = df.iloc[-1]
+        previous = df.iloc[-2]
+        
+        current_price = round(latest['Close'], 2)
+        
+        # Bullish Crossover Strategy (EMA 9 Cross above EMA 21)
+        if previous['EMA9'] <= previous['EMA21'] and latest['EMA9'] > latest['EMA21']:
+            sl = round(current_price * 0.997, 2)
+            tp = round(current_price * 1.006, 2)
+            msg = (
+                f"🚨 *REAL-TIME BUY SIGNAL* 🚨\n\n"
+                f"📊 *Index:* {name}\n"
+                f"💵 *Price:* ₹{current_price}\n"
+                f"📈 *RSI:* {round(latest['RSI'], 2)}\n"
+                f"🎯 *Target:* ₹{tp}\n"
+                f"🛑 *Stoploss:* ₹{sl}\n"
+                f"⏰ *Time:* {datetime.datetime.now().strftime('%H:%M:%S IST')}"
+            )
+            send_telegram_alert(msg)
 
-    def s3_macd_signal(self):
-        """3. MACD Histogram & Signal Cross"""
-        exp1 = self.df['close'].ewm(span=12, adjust=False).mean()
-        exp2 = self.df['close'].ewm(span=26, adjust=False).mean()
-        macd = exp1 - exp2
-        signal = macd.ewm(span=9, adjust=False).mean()
-        if macd.iloc[-1] > signal.iloc[-1]:
-            return 1
-        elif macd.iloc[-1] < signal.iloc[-1]:
-            return -1
-        return 0
+def main():
+    print("🤖 Index Trading Telegram Bot Started...")
+    send_telegram_alert("🚀 *Index Trading Bot Activated!* Live market scanning running on Render Free Service.")
+    
+    while True:
+        try:
+            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Scanning Indices...")
+            scan_market()
+            time.sleep(60)
+        except Exception as e:
+            print(f"[ERROR] Loop Exception: {e}")
+            time.sleep(15)
 
-    def s4_bollinger_breakout(self):
-        """4. Bollinger Bands Expansion / Touch"""
-        sma = self.df['close'].rolling(20).mean()
-        std = self.df['close'].rolling(20).std()
-        upper = sma + (std * 2)
-        lower = sma - (std * 2)
-        cp = self.df['close'].iloc[-1]
-        if cp > upper.iloc[-1]:
-            return 1
-        elif cp < lower.iloc[-1]:
-            return -1
-        return 0
-
+if __name__ == "__main__":
+    keep_alive()
+    main()
     def s5_vwap_validation(self):
         """5. VWAP / Price Position"""
         typical_price = (self.df['high'] + self.df['low'] + self.df['close']) / 3
